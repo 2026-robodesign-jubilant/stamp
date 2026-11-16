@@ -14,6 +14,9 @@
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "moveit/move_group_interface/move_group_interface.h"
+#include "moveit_msgs/msg/robot_trajectory.hpp"
+#include "tf2/LinearMath/Matrix3x3.h"
+#include "tf2/LinearMath/Quaternion.h"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2/convert.h"
@@ -47,8 +50,17 @@ public:
     move_group_gripper_->setMaxAccelerationScalingFactor(1.0);  // グリッパーの最大加速度スケーリング
 
     // ホームポジションに設定
-    move_group_arm_->setNamedTarget("home");
-    move_group_arm_->move();
+    // ホームポジションへの移動は、関節角を受け取れるようになってから on_timer() の最初で行う
+
+    // 押し込みのパラメータ（単位は m・秒）。launch の引数や --ros-args -p で変えられる
+    // 2026 Jubilant: はんこの寸法を測ったら stamp_below_grip を合わせる
+    grip_offset_ = this->declare_parameter("grip_offset", 0.07);  // gripper_base_link から、はんこを掴む位置（指の中ほど）までの距離（手先の向きに沿って）
+    stamp_below_grip_ = this->declare_parameter("stamp_below_grip", 0.04);  // 掴む位置から印面までの高さ（はんこを縦に持つ前提）
+    paper_z_ = this->declare_parameter("paper_z", 0.0);  // 紙の表面の高さ（base_link 基準）
+    hover_height_ = this->declare_parameter("hover_height", 0.05);  // 押す前に印面を止めておく、紙からの高さ
+    press_depth_ = this->declare_parameter("press_depth", 0.003);  // 紙の表面よりどれだけ下まで押し込むか
+    press_hold_sec_ = this->declare_parameter("press_hold_sec", 1.0);  // 押し込んだまま止める時間
+    press_speed_scale_ = this->declare_parameter("press_speed_scale", 0.1);  // 押し込み・持ち上げの速さ（最大速度に対する割合）
 
     // TFバッファとリスナーの初期化
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
@@ -63,6 +75,14 @@ private:
   // タイマー処理
   void on_timer()
   {
+    // ホームポジションに設定（最初の 1 回だけ）。
+    // 2026 Jubilant: コンストラクタの中ではまだ関節角を受け取れず、出発点を範囲内に収められないのでここに移した
+    if (!homed_) {
+      move_group_arm_->setNamedTarget("home");
+      plan_and_execute_arm();
+      homed_ = true;
+    }
+
     geometry_msgs::msg::TransformStamped tf_msg;
     try {
       tf_msg = tf_buffer_->lookupTransform("base_link", "target_0", tf2::TimePointZero);  // "base_link"から"target_0"への変換を取得
@@ -97,6 +117,32 @@ private:
     }
   }
 
+  // 今の関節角を「動ける範囲」に収めたものを、計画の出発点にする。
+  // 2026 Jubilant: 紙の真上で低く構えると、肩の関節が範囲の端（約 -92°）をわずかに越え、
+  // Jazzy の MoveIt は「出発点が範囲外」として次の計画を止める（CheckStartStateBounds）。その対策。
+  void set_start_state_in_bounds()
+  {
+    auto state = move_group_arm_->getCurrentState(1.0);
+    if (!state) {
+      move_group_arm_->setStartStateToCurrentState();
+      return;
+    }
+    state->enforceBounds();
+    move_group_arm_->setStartState(*state);
+  }
+
+  // 範囲内に収めた出発点から計画して、実行する。
+  // move() は出発点の指定を無視して今の関節角から計画するので、plan() と execute() に分けている。
+  bool plan_and_execute_arm()
+  {
+    set_start_state_in_bounds();
+    MoveGroupInterface::Plan plan;
+    if (move_group_arm_->plan(plan) != moveit::core::MoveItErrorCode::SUCCESS) {
+      return false;
+    }
+    return move_group_arm_->execute(plan) == moveit::core::MoveItErrorCode::SUCCESS;
+  }
+
   // ホームポジションの設定
   void init_pose()
   {
@@ -110,7 +156,7 @@ private:
       angles::from_degrees(90)
     };
     move_group_arm_->setJointValueTarget(joint_values);  // ジョイント値を設定
-    move_group_arm_->move();  // アームを移動
+    plan_and_execute_arm();  // アームを移動
   }
 
 // 特定の関節を指定して動かす
@@ -144,60 +190,87 @@ void move_specific_joint_step(int joint_index, double relative_angle_deg)
 }
 
   // スタンピング動作
+  // 2026 Jubilant: P班の版は紙の上で止まってホームに戻っていた（押し込みはコメントアウト）。
+  // 印面の真上まで動かし、そこから真下にまっすぐ押し込んで、少し止めてから真上に戻す動きを足した。
   void stamping(tf2::Vector3 target_position)
   {
     const double GRIPPER_DEFAULT = 0.0;  // デフォルトのグリッパー角度
-    const double GRIPPER_OPEN = angles::from_degrees(60.0);  // グリッパーオープン角度
-    const double GRIPPER_CLOSE = angles::from_degrees(15.0);  // グリッパークローズ角度
     const int move_steps = 4;  // 移動ステップ数
-    const double before_press_z = 0.05;  // プレス前のZ位置
+    const double ROLL = 90, PITCH = 0, YAW = 90;  // 手先の向き（P班と同じ。指が水平に前を向き、はんこは縦に持つ）
 
     control_gripper(GRIPPER_DEFAULT);  // グリッパーをデフォルトに設定
     init_pose();  // ホームポジションに移動
 
-    geometry_msgs::msg::Pose current_pose = move_group_arm_->getCurrentPose().pose;  // 現在のアームのポーズを取得
+    // 印面を (x, y, z) に置きたいとき、gripper_base_link をどこに置けばよいか。
+    // 掴む位置は gripper_base_link から手先の向き（z 軸）に grip_offset 先、印面はそこから stamp_below_grip 下。
+    tf2::Quaternion q;
+    q.setRPY(angles::from_degrees(ROLL), angles::from_degrees(PITCH), angles::from_degrees(YAW));
+    const tf2::Vector3 approach = tf2::Matrix3x3(q) * tf2::Vector3(0, 0, 1);  // 手先の向き（base_link 基準）
+    auto gripper_pose_for_face = [&](double face_z) {
+        tf2::Vector3 grip(target_position.x(), target_position.y(), face_z + stamp_below_grip_);
+        tf2::Vector3 base = grip - approach * grip_offset_;
+        geometry_msgs::msg::Pose pose;
+        pose.position.x = base.x();
+        pose.position.y = base.y();
+        pose.position.z = base.z();
+        pose.orientation = tf2::toMsg(q);
+        return pose;
+      };
+    const auto hover_pose = gripper_pose_for_face(paper_z_ + hover_height_);  // 印面が紙の hover_height 上
+    const auto press_pose = gripper_pose_for_face(paper_z_ - press_depth_);   // 印面が紙の press_depth 下
 
-    // 中間位置を設定して移動
+    // 印面の真上（hover_pose）まで、P班と同じく途中の点を経由して近づく
+    geometry_msgs::msg::Pose current_pose = move_group_arm_->getCurrentPose().pose;
     for (int i = 1; i <= move_steps; ++i) {
-      geometry_msgs::msg::Pose intermediate_pose;
-      intermediate_pose.position.x = current_pose.position.x + (target_position.x() - current_pose.position.x) * i / move_steps;
-      intermediate_pose.position.y = current_pose.position.y + (target_position.y() - current_pose.position.y) * i / move_steps;
-      intermediate_pose.position.z = 0.4 - (-0.05 + (0.05 * i));  // Z軸位置を調整
-
-      control_arm(intermediate_pose.position.x, intermediate_pose.position.y, intermediate_pose.position.z, 90, 0, 90);  // アームを移動
-      std::cout << "Move steps loop iteration: " << i << "/" << move_steps << std::endl;  // ステップの表示
+      const double r = static_cast<double>(i) / move_steps;
+      const double x = current_pose.position.x + (hover_pose.position.x - current_pose.position.x) * r;
+      const double y = current_pose.position.y + (hover_pose.position.y - current_pose.position.y) * r;
+      const double z = current_pose.position.z + (hover_pose.position.z - current_pose.position.z) * r;
+      if (!control_arm(x, y, z, ROLL, PITCH, YAW)) {
+        RCLCPP_ERROR(this->get_logger(), "印面の真上まで動けませんでした（%d/%d）。押さずに戻ります", i, move_steps);
+        finish();
+        return;
+      }
+      RCLCPP_INFO(this->get_logger(), "近づく %d/%d", i, move_steps);
     }
 
-// 目標位置に向かって最終的な調整
-    current_pose.position.x = target_position.x();
-    current_pose.position.y = target_position.y();
-
-    double calculated_arm_length = std::sqrt((target_position.x() * target_position.x()) + (target_position.y() * target_position.y()));  // アームの長さ計算
-    double point_z = ((-0.12 * calculated_arm_length) + 0.07);  // Z位置計算
-
-    // Z軸調整
-    for (int i = 3; i >= 1; i--) {
-      geometry_msgs::msg::Pose intermediate_pose;
-      intermediate_pose.position.x = current_pose.position.x;
-      intermediate_pose.position.y = current_pose.position.y;
-      intermediate_pose.position.z = ((0.1 - point_z) * i);  // Z軸の最終調整
-
-      control_arm(intermediate_pose.position.x, intermediate_pose.position.y, intermediate_pose.position.z, 90, 0, 90);  // アームを移動
-      std::cout << "Movement Control Loop: " << i << std::endl;
+    // 真下にまっすぐ押し込む → 止める → 真上に戻す
+    if (move_straight(press_pose, "押し込み")) {
+      RCLCPP_INFO(this->get_logger(), "押し込みました（%.1f 秒止めます）", press_hold_sec_);
+      rclcpp::sleep_for(std::chrono::milliseconds(static_cast<int>(press_hold_sec_ * 1000)));
+      move_straight(hover_pose, "持ち上げ");
     }
+    finish();
+  }
 
-    double theta = angles::to_degrees(std::asin(before_press_z / calculated_arm_length));  // プレス角度を計算
+  // 手先の向きを変えずに、今の位置から pose までまっすぐ（直線で）ゆっくり動かす
+  bool move_straight(const geometry_msgs::msg::Pose & pose, const char * label)
+  {
+    moveit_msgs::msg::RobotTrajectory trajectory;
+    set_start_state_in_bounds();
+    move_group_arm_->setMaxVelocityScalingFactor(press_speed_scale_);
+    move_group_arm_->setMaxAccelerationScalingFactor(press_speed_scale_);
+    const double fraction = move_group_arm_->computeCartesianPath({pose}, 0.005, trajectory);
+    bool ok = false;
+    if (fraction < 0.99) {
+      // 途中までしか直線で動けない（届かない・関節の限界）ときは、中途半端に押さない
+      RCLCPP_ERROR(this->get_logger(), "%s：直線で動ける割合が %.0f%% しかないので中止します", label, fraction * 100);
+    } else {
+      ok = move_group_arm_->execute(trajectory) == moveit::core::MoveItErrorCode::SUCCESS;
+      if (!ok) {
+        RCLCPP_ERROR(this->get_logger(), "%s：実行に失敗しました", label);
+      }
+    }
+    move_group_arm_->setMaxVelocityScalingFactor(0.6);  // コンストラクタと同じ値に戻す
+    move_group_arm_->setMaxAccelerationScalingFactor(0.6);
+    return ok;
+  }
 
- /*   // ジョイントを動かして微調整
-    for (int i = 0; i < 5; ++i) {
-      move_specific_joint_step(1, -theta / 5);  // ジョイントの角度調整
-      std::cout << "Step " << (i + 1) << ": Joint moved by" << theta / 5 << "°" << std::endl;
-    } 
-
-    control_arm(0.3, 0, 0.3, 90, 0, 90);  // アームの最終位置に移動
-*/
-    init_pose();  // ホームポジションに戻る
-    rclcpp::shutdown();  // ノード終了
+  // ホームポジションに戻ってノードを終える
+  void finish()
+  {
+    init_pose();
+    rclcpp::shutdown();
   }
 
   // グリッパー制御
@@ -210,7 +283,7 @@ void move_specific_joint_step(int joint_index, double relative_angle_deg)
   }
 
   // アーム制御
-  void control_arm(
+  bool control_arm(
     const double x, const double y, const double z,
     const double roll, const double pitch, const double yaw)
   {
@@ -222,7 +295,7 @@ void move_specific_joint_step(int joint_index, double relative_angle_deg)
     q.setRPY(angles::from_degrees(roll), angles::from_degrees(pitch), angles::from_degrees(yaw));  // 回転角度を設定
     target_pose.orientation = tf2::toMsg(q);  // クォータニオンに変換
     move_group_arm_->setPoseTarget(target_pose);  // 目標位置を設定
-    move_group_arm_->move();  // アームを移動
+    return plan_and_execute_arm();  // アームを移動
   }
 
   // メンバ変数
@@ -232,6 +305,14 @@ void move_specific_joint_step(int joint_index, double relative_angle_deg)
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
   rclcpp::TimerBase::SharedPtr timer_{nullptr};
   tf2::Stamped<tf2::Transform> tf_past_;
+  double grip_offset_;
+  double stamp_below_grip_;
+  double paper_z_;
+  double hover_height_;
+  double press_depth_;
+  double press_hold_sec_;
+  double press_speed_scale_;
+  bool homed_ = false;
 };
 
 int main(int argc, char **argv)

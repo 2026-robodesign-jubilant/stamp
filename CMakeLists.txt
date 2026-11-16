@@ -10,7 +10,7 @@ endif()
 
 # Default to C++14
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 # find dependencies
@@ -21,6 +21,8 @@ find_package(image_geometry REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core)
 find_package(rclcpp REQUIRED)
+find_package(angles REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
 add_executable(fixed_position_publisher

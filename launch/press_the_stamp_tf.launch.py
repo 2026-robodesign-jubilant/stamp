@@ -10,6 +10,7 @@
 from crane_x7_description.robot_description_loader import RobotDescriptionLoader
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import SetParameter
 from launch_ros.actions import Node
@@ -30,6 +31,11 @@ def generate_launch_description():
         'use_sim_time', default_value='false',
         description=('Set true when using the gazebo simulator.')
     )
+    # 2026 Jubilant: カードの押印欄（card_target.launch.py）を押すときは false にして、固定座標を出さない
+    declare_use_fixed_target = DeclareLaunchArgument(
+        'use_fixed_target', default_value='true',
+        description='fixed_position_publisher で固定座標の target_0 を出すか')
+
     # 押し込みの寸法（m）。はんこを測ったら、ここか起動時の引数（例 stamp_below_grip:=0.05）で合わせる
     press_args = {
         'grip_offset': ('0.07', 'gripper_base_link から、はんこを掴む位置までの距離'),
@@ -55,10 +61,12 @@ def generate_launch_description():
     detection_node = Node(# name='fixed_position_publisher'
                           package='crane_x7_stamp',
                           executable='fixed_position_publisher',
-                          output='screen')
+                          output='screen',
+                          condition=IfCondition(LaunchConfiguration('use_fixed_target')))
 
     return LaunchDescription([
         declare_use_sim_time,
+        declare_use_fixed_target,
         *declare_press_args,
         SetParameter(name='use_sim_time', value=LaunchConfiguration('use_sim_time')),
         picking_node,

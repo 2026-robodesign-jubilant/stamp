@@ -2,49 +2,23 @@
 # SPDX-License-Identifier: Apache 2.0
 # このファイルはKeitaro Nakamuraによって作成されたpick_and_move.launch.pyをコピーし, Haruto Yamamotoが一部を改変したものです.
 # 変更内容　動作するパッケージ名とプログラム名の変更
-import os
-
-from ament_index_python.packages import get_package_share_directory
 from crane_x7_description.robot_description_loader import RobotDescriptionLoader
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch_ros.actions import SetParameter
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import SetParameter
 from launch_ros.actions import Node
-import yaml
+from moveit_configs_utils import MoveItConfigsBuilder
 
 
-def load_file(package_name, file_path):
-    package_path = get_package_share_directory(package_name)
-    absolute_file_path = os.path.join(package_path, file_path)
-
-    try:
-        with open(absolute_file_path, 'r') as file:
-            return file.read()
-    except EnvironmentError:  # parent of IOError, OSError *and* WindowsError where available
-        return None
-
-
-def load_yaml(package_name, file_path):
-    package_path = get_package_share_directory(package_name)
-    absolute_file_path = os.path.join(package_path, file_path)
-
-    try:
-        with open(absolute_file_path, 'r') as file:
-            return yaml.safe_load(file)
-    except EnvironmentError:  # parent of IOError, OSError *and* WindowsError where available
-        return None
-
-
+# Jazzy 移植: crane_x7_examples (jazzy) と同じく MoveItConfigsBuilder で MoveIt の設定を渡す
 def generate_launch_description():
     description_loader = RobotDescriptionLoader()
 
-    robot_description_semantic_config = load_file(
-        'crane_x7_moveit_config', 'config/crane_x7.srdf')
-    robot_description_semantic = {
-        'robot_description_semantic': robot_description_semantic_config}
-
-    kinematics_yaml = load_yaml('crane_x7_moveit_config', 'config/kinematics.yaml')
+    moveit_config = MoveItConfigsBuilder('crane_x7').to_moveit_configs()
+    moveit_config.robot_description = {
+        'robot_description': description_loader.load(),
+    }
 
     # Gazebo用
     declare_use_sim_time = DeclareLaunchArgument(
@@ -56,9 +30,7 @@ def generate_launch_description():
                         package='crane_x7_stamp',
                         executable='open_close_hand',
                         output='screen',
-                        parameters=[{'robot_description': description_loader.load()},
-                                    robot_description_semantic,
-                                    kinematics_yaml])
+                        parameters=[moveit_config.to_dict()])
 
     return LaunchDescription([
         declare_use_sim_time,

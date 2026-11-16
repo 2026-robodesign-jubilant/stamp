@@ -1,3 +1,52 @@
+# crane_x7_stamp（ROS 2 Jazzy 版）
+
+ロボット設計製作論 2026 チーム Jubilant が、2024 年度 P班の [ken222d/crane_x7_stamp](https://github.com/ken222d/crane_x7_stamp)（Apache License 2.0）を ROS 2 Jazzy で動くように移植したものです。元の README は下にそのまま残しています。
+
+## Jazzy 移植で変えたこと
+
+- C++ の版を 14 から 17 に変更（Jazzy の MoveIt 2 が必要とするため）
+- `CMakeLists.txt` に `angles` と `tf2_ros` の `find_package` を追加、`package.xml` に `tf2_ros` を追加
+- 使っていない `realsense2_camera` の依存を削除
+- launch ファイル 3 本を、rt-net の `crane_x7_examples`（jazzy）と同じく `MoveItConfigsBuilder` で MoveIt の設定を渡す形に変更
+
+## 動作環境
+
+- Ubuntu 24.04 / ROS 2 Jazzy
+- [rt-net/crane_x7_ros](https://github.com/rt-net/crane_x7_ros) と [rt-net/crane_x7_description](https://github.com/rt-net/crane_x7_description) の `jazzy` ブランチ
+
+```bash
+mkdir -p ~/ros2/stamp_ws/src && cd ~/ros2/stamp_ws/src
+git clone -b jazzy https://github.com/rt-net/crane_x7_ros.git
+git clone -b jazzy https://github.com/rt-net/crane_x7_description.git
+git clone https://github.com/2026-robodesign-jubilant/stamp.git crane_x7_stamp
+cd ~/ros2/stamp_ws
+source /opt/ros/jazzy/setup.bash
+rosdep install -r -y -i --from-paths src --rosdistro jazzy
+colcon build --symlink-install
+```
+
+## Gazebo で固定座標に押しに行く
+
+端末 1:
+
+```bash
+cd ~/ros2/stamp_ws && source install/setup.bash
+export ROS_DOMAIN_ID=91 GZ_PARTITION=stamp_sim
+ros2 launch crane_x7_gazebo crane_x7_with_table.launch.py
+```
+
+端末 1 に `You can start planning now!` が出てから、端末 2:
+
+```bash
+cd ~/ros2/stamp_ws && source install/setup.bash
+export ROS_DOMAIN_ID=91 GZ_PARTITION=stamp_sim
+ros2 launch crane_x7_stamp press_the_stamp_tf.launch.py use_sim_time:=true
+```
+
+2026-11-16 に確認した結果：手先（`crane_x7_gripper_base_link`）は x 0.200 m・y 0.200 m・z 0.064 m まで下りてホームに戻ります。元のコードは押し込む動きがコメントアウトされているため、まだ紙には押しません。`fixed_position_publisher` は止めるまで座標を送り続けるので、終わったら Ctrl+C で止めてください。
+
+---
+
 # crane_x7_stamp
 ロボット設計製作論3 P班  
 指定された座標にハンコを押すためのパッケージです.

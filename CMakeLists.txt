@@ -92,6 +92,12 @@ install(TARGETS
   press_the_stamp_tf
   DESTINATION lib/${PROJECT_NAME}/
 )
+# 2026 Jubilant: ArUco カードから押印欄を求めて target_0 を出す Python ノード
+install(PROGRAMS
+  scripts/card_target_publisher.py
+  DESTINATION lib/${PROJECT_NAME}/
+)
+
 install(DIRECTORY
   launch
   DESTINATION share/${PROJECT_NAME}/

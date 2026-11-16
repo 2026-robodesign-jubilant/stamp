@@ -62,6 +62,30 @@ ros2 launch crane_x7_stamp press_the_stamp_tf.launch.py stamp_below_grip:=0.05 p
 
 **実機で初めて動かすときは、`paper_z:=0.05` のように紙より高い位置を指定して、空中で押す動きを確かめてから**本当の高さに下げてください。
 
+## ArUco カードの押印欄を押す（card_target_publisher）
+
+`card_target_publisher.py` は、四隅に ArUco マーカー（ID 1〜4）を印刷したカード（ocr リポジトリの `test_docs/card/corner0.pdf`）をカメラで見つけ、押印欄の位置を TF の `target_0` として出します。`press_the_stamp_tf` はそれを読んで押しに行きます。
+
+1. 4 つのマーカーの角（16 点）とカードの寸法から、カメラに対するカードの位置・向きを求めて TF `カメラ → card` を出す
+2. カードが 1 秒止まったら、真上から見た画像（読む向き、594 × 840 px）を Claude（`claude-opus-5-5`）に 1 回だけ見せて押印欄を探させる
+3. 見つかったら TF `card → target_0` も出す。カードが 3 秒見えなくなったら押印欄を忘れる（次のカードでまた探す）
+
+`card` の座標系は、台紙の向きで紙の左上が原点、x が右、y が下（単位 m）です。
+
+```bash
+# カメラの取り付け位置（手先 crane_x7_gripper_base_link → カメラの光学座標系）は、マウントが決まったら mount_x などで渡す
+# Claude を使う（ANTHROPIC_API_KEY と、anthropic・pydantic>=2・brotli>=1.2 が入った仮想環境が要る）
+ros2 launch crane_x7_stamp card_target.launch.py mount_x:=0.03 mount_z:=0.05
+# Claude を使わずに試す：押印欄の位置を台紙の左上からの mm で渡す
+ros2 launch crane_x7_stamp card_target.launch.py stamp_point_mm:="[135.0, 118.0]"
+# 押す側は固定座標を出さずに起動する
+ros2 launch crane_x7_stamp press_the_stamp_tf.launch.py use_fixed_target:=false
+```
+
+画像は `/camera/camera/color/image_raw`、カメラの情報（焦点距離など）は `/camera/camera/color/camera_info` を読みます。別のカメラに替えるときは `image_topic`・`camera_info_topic`・`camera_frame` を変えてください。Web カメラなど `camera_info` を出さないカメラは、先にキャリブレーションが必要です。
+
+2026-11-16 に合成画像（カメラから 47 cm、斜め・回転あり）で確認した結果：`target_0` の位置は真の値と 1 mm 以内で一致。Claude で探す部分は未確認です。
+
 ---
 
 # crane_x7_stamp

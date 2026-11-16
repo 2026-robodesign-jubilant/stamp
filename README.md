@@ -84,6 +84,15 @@ ros2 launch crane_x7_stamp press_the_stamp_tf.launch.py use_fixed_target:=false
 
 画像は `/camera/camera/color/image_raw`、カメラの情報（焦点距離など）は `/camera/camera/color/camera_info` を読みます。別のカメラに替えるときは `image_topic`・`camera_info_topic`・`camera_frame` を変えてください。Web カメラなど `camera_info` を出さないカメラは、先にキャリブレーションが必要です。
 
+### Web カメラで試す画面（ROS なし）
+
+`tools/card_camera_test.py` は、USB Web カメラの映像を表示し、「撮影して読む」（またはスペースキー）でその瞬間のカードを Claude に見せて、文書の種類・要点と押印欄の位置（カード上の mm・撮った画像の px）を表示します。押印欄のテスト用カードは ocr リポジトリの `test_docs/card/04_receipt.pdf`（正解 78, 110 mm）。
+
+```bash
+read -rs ANTHROPIC_API_KEY && export ANTHROPIC_API_KEY
+python3 tools/card_camera_test.py --device /dev/video2 --expect 78,110
+```
+
 2026-11-16 に合成画像（カメラから 47 cm、斜め・回転あり）で確認した結果：`target_0` の位置は真の値と 1 mm 以内で一致。Claude で探す部分は未確認です。
 
 ---

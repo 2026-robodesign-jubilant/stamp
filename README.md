@@ -43,7 +43,24 @@ export ROS_DOMAIN_ID=91 GZ_PARTITION=stamp_sim
 ros2 launch crane_x7_stamp press_the_stamp_tf.launch.py use_sim_time:=true
 ```
 
-2026-11-16 に確認した結果：手先（`crane_x7_gripper_base_link`）は x 0.200 m・y 0.200 m・z 0.064 m まで下りてホームに戻ります。元のコードは押し込む動きがコメントアウトされているため、まだ紙には押しません。`fixed_position_publisher` は止めるまで座標を送り続けるので、終わったら Ctrl+C で止めてください。
+2026-11-16 に確認した結果：印面の真上まで近づき、真下にまっすぐ押し込んで 1 秒止め、真上に戻してからホームに戻ります（Gazebo で 17 回の動きがすべて成功）。`fixed_position_publisher` は止めるまで座標を送り続けるので、終わったら Ctrl+C で止めてください。
+
+## 押し込みの寸法を合わせる
+
+`press_the_stamp_tf` は、はんこの寸法を次のパラメータで受け取ります（単位は m）。起動時に `名前:=値` で変えられます。
+
+| 名前 | 既定値 | 意味 |
+|---|---|---|
+| `grip_offset` | 0.07 | `crane_x7_gripper_base_link` から、はんこを掴む位置（指の中ほど）までの距離 |
+| `stamp_below_grip` | 0.04 | 掴む位置から印面までの高さ（はんこを縦に持つ前提） |
+| `paper_z` | 0.0 | 紙の表面の高さ（`base_link` 基準） |
+| `press_depth` | 0.003 | 紙の表面よりどれだけ下まで押し込むか |
+
+```bash
+ros2 launch crane_x7_stamp press_the_stamp_tf.launch.py stamp_below_grip:=0.05 press_depth:=0.002
+```
+
+**実機で初めて動かすときは、`paper_z:=0.05` のように紙より高い位置を指定して、空中で押す動きを確かめてから**本当の高さに下げてください。
 
 ---
 

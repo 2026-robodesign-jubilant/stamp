@@ -13,6 +13,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import SetParameter
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
@@ -29,12 +30,27 @@ def generate_launch_description():
         'use_sim_time', default_value='false',
         description=('Set true when using the gazebo simulator.')
     )
+    # 押し込みの寸法（m）。はんこを測ったら、ここか起動時の引数（例 stamp_below_grip:=0.05）で合わせる
+    press_args = {
+        'grip_offset': ('0.07', 'gripper_base_link から、はんこを掴む位置までの距離'),
+        'stamp_below_grip': ('0.04', '掴む位置から印面までの高さ'),
+        'paper_z': ('0.0', '紙の表面の高さ（base_link 基準）'),
+        'press_depth': ('0.003', '紙の表面よりどれだけ下まで押し込むか'),
+    }
+    declare_press_args = [
+        DeclareLaunchArgument(name, default_value=default, description=desc)
+        for name, (default, desc) in press_args.items()
+    ]
+    press_params = {
+        name: ParameterValue(LaunchConfiguration(name), value_type=float) for name in press_args
+    }
+
     # アームの動きのコードを起動するのはこっち
     picking_node = Node(# name="pick_and_move_tf",
                         package='crane_x7_stamp',
                         executable='press_the_stamp_tf',
                         output='screen',
-                        parameters=[moveit_config.to_dict()])
+                        parameters=[moveit_config.to_dict(), press_params])
     # 固定座標を送るコードを起動するのはこっち
     detection_node = Node(# name='fixed_position_publisher'
                           package='crane_x7_stamp',
@@ -43,6 +59,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         declare_use_sim_time,
+        *declare_press_args,
         SetParameter(name='use_sim_time', value=LaunchConfiguration('use_sim_time')),
         picking_node,
         detection_node,
